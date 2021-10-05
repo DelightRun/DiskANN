@@ -55,7 +55,7 @@ struct DiskANNIndex {
   void cache_sample_paths(size_t             num_nodes_to_cache,
                           const std::string &warmup_query_file,
                           uint32_t           num_threads) {
-    
+
     if (!file_exists(warmup_query_file)) {
       std::cout << "No warm up query file exists." << std::endl;
       return;
@@ -198,7 +198,7 @@ struct DiskANNIndex {
           queries.data(i), range, l_search, u64_ids.data() + i * l_search,
           dists.mutable_data(i * l_search), beam_width);
     }
-    
+
     auto   ids_mutable = ids.mutable_unchecked();
     auto   dists_mutable = dists.mutable_unchecked();
     size_t pos = 0;
@@ -215,7 +215,7 @@ struct DiskANNIndex {
 
 #endif
 
-PYBIND11_MODULE(diskannpy, m) {
+PYBIND11_MODULE(diskssgpy, m) {
   m.doc() = "DiskANN Python Bindings";
   m.attr("__version__") = "0.2.0";
 
@@ -498,7 +498,7 @@ PYBIND11_MODULE(diskannpy, m) {
           py::arg("indexing_ram_limit"), py::arg("num_threads"),
           py::arg("pq_disk_bytes") = 0);
 
-  
+
   py::class_<DiskANNIndex<uint8_t>>(m, "DiskANNUInt8Index")
       .def(py::init([](diskann::Metric metric) {
         return std::unique_ptr<DiskANNIndex<uint8_t>>(

@@ -39,7 +39,7 @@ class BuildExt(build_ext):
         opts.append('-std=c++14')
         opts.append('-fvisibility=hidden')
         print('Extra compilation arguments:', opts)
-        
+
         for ext in self.extensions:
             ext.extra_compile_args.extend(opts)
             ext.extra_link_args.extend(self.link_opts.get(ct, []))
@@ -56,7 +56,7 @@ class BuildExt(build_ext):
 
 ext_modules = [
        Extension(
-        'diskannpy',
+        'diskssgpy',
         ['src/diskann_bindings.cpp'],
         include_dirs=['../include/',
                       '/opt/intel/compilers_and_libraries/linux/mkl/include/',
@@ -71,7 +71,7 @@ ext_modules = [
 
 
 setup(
-    name="diskannpy",
+    name="diskssgpy",
     version=__version__,
     author="Harsha Vardhan Simhadri",
     author_email="harshasi@microsoft.com",
