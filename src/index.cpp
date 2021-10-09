@@ -402,7 +402,7 @@ namespace diskann {
     return min_idx;
   }
 
-  /* iterate_to_fixed_point():
+  /* iterate_to_fixed_point(): 搜索时用
    * node_coords : point whose neighbors to be found.
    * init_ids : ids of initial search list.
    * Lsize : size of list.
@@ -415,7 +415,8 @@ namespace diskann {
    */
   template<typename T, typename TagT>
   std::pair<uint32_t, uint32_t> Index<T, TagT>::iterate_to_fixed_point(
-      const T *node_coords, const unsigned Lsize,
+      const T *node_coords,
+      const unsigned Lsize,
       const std::vector<unsigned> &init_ids,
       std::vector<Neighbor> &      expanded_nodes_info,
       tsl::robin_set<unsigned> &   expanded_nodes_ids,
@@ -497,6 +498,42 @@ namespace diskann {
     return std::make_pair(hops, cmps);
   }
 
+  // template<typename T, typename TagT>
+  // void Index<T, TagT>::get_expanded_nodes(
+  //     const size_t node_id,
+  //     const unsigned Lindex,
+  //     std::vector<unsigned>     init_ids,
+  //     std::vector<Neighbor> &   expanded_nodes_info,
+  //     tsl::robin_set<unsigned> &expanded_nodes_ids) {
+  //   expanded_nodes_info.reserve(Lindex);
+  //   expanded_nodes_ids.reserve(Lindex);
+
+  //   tsl::robin_set<unsigned> inserted_into_pool;
+  //   inserted_into_pool.reserve(Lindex + 1);
+  //   inserted_into_pool.insert((unsigned) node_id);
+
+  //   // TODO: 目前完全照搬SSG实现，未来是否可以考虑改为排序后取Top L
+  //   const T* node_coords = _data + _aligned_dim * node_id;
+  //   for (unsigned neighbor : _final_graph[node_id]) {
+  //     for (unsigned n_neighbor : _final_graph[neighbor]) {
+  //       std::cout << node_id << " -> " << neighbor << " -> " << n_neighbor << std::endl;
+  //       if (inserted_into_pool.find(n_neighbor) == inserted_into_pool.end()) {
+  //         inserted_into_pool.insert(n_neighbor);
+
+  //         float distance = _distance->compare(
+  //           _data + _aligned_dim * (size_t) n_neighbor,
+  //           node_coords, (unsigned) _aligned_dim
+  //         );
+
+  //         expanded_nodes_info.emplace_back(n_neighbor, distance, false);
+  //         expanded_nodes_ids.insert(n_neighbor);
+
+  //         if (expanded_nodes_info.size() == Lindex) return;
+  //       }
+  //     }
+  //   }
+  // }
+
   template<typename T, typename TagT>
   void Index<T, TagT>::get_expanded_nodes(
       const size_t node_id, const unsigned Lindex,
@@ -515,8 +552,9 @@ namespace diskann {
 
   template<typename T, typename TagT>
   void Index<T, TagT>::occlude_list(std::vector<Neighbor> &pool,
-                                    const float alpha, const unsigned degree,
-                                    const unsigned         maxc,
+                                    const float alpha,
+                                    const unsigned degree,
+                                    const unsigned maxc,
                                     std::vector<Neighbor> &result) {
     auto               pool_size = (_u32) pool.size();
     std::vector<float> occlude_factor(pool_size, 0);
@@ -525,55 +563,50 @@ namespace diskann {
 
   template<typename T, typename TagT>
   void Index<T, TagT>::occlude_list(std::vector<Neighbor> &pool,
-                                    const float alpha, const unsigned degree,
-                                    const unsigned         maxc,
+                                    const float alpha,
+                                    const unsigned degree,
+                                    const unsigned maxc,
                                     std::vector<Neighbor> &result,
-                                    std::vector<float> &   occlude_factor) {
-    if (pool.empty())
-      return;
+                                    std::vector<float> &occlude_factor) {
+    if (pool.empty()) return;
+
     assert(std::is_sorted(pool.begin(), pool.end()));
     assert(!pool.empty());
 
-    float cur_alpha = 1;
-    while (cur_alpha <= alpha && result.size() < degree) {
-      unsigned start = 0;
-      float    eps =
-          cur_alpha +
-          0.01;  // used for MIPS, where we store a value of eps in cur_alpha to
-                 // denote pruned out entries which we can skip in later rounds.
-      while (result.size() < degree && (start) < pool.size() && start < maxc) {
+    float cur_alpha = 0.5;  // cosine(60 degree) = 0.5
+    // while (cur_alpha <= alpha && result.size() < degree) {
+      // used for MIPS, where we store a value of eps in cur_alpha to
+      // denote pruned out entries which we can skip in later rounds.
+      // float eps = cur_alpha + 0.01;
+
+      for (unsigned start = 0; start < pool.size() && result.size() < degree; ++start) {
+        diskann::cout << pool[start].id << ": " << occlude_factor[start] << std::endl;
+
+        // 如果该点被occlude了，则跳过
+        if (occlude_factor[start] > cur_alpha) continue;
+
         auto &p = pool[start];
-        if (occlude_factor[start] > cur_alpha) {
-          start++;
-          continue;
-        }
-        occlude_factor[start] = std::numeric_limits<float>::max();
         result.push_back(p);
-        for (unsigned t = start + 1; t < pool.size() && t < maxc; t++) {
-          if (occlude_factor[t] > alpha)
-            continue;
+        occlude_factor[start] = std::numeric_limits<float>::max();
+
+        for (unsigned t = start + 1; t < pool.size(); t++) {
+          if (occlude_factor[t] > cur_alpha) continue;
           float djk = _distance->compare(
               _data + _aligned_dim * (size_t) pool[t].id,
               _data + _aligned_dim * (size_t) p.id, (unsigned) _aligned_dim);
           if (_metric == diskann::Metric::L2) {
-            occlude_factor[t] =
-                (std::max)(occlude_factor[t], pool[t].distance / djk);
-          } else if (_metric ==
-                     diskann::Metric::INNER_PRODUCT) {  // stylized rules for
-                                                        // inner product since
-                                                        // we want max instead
-                                                        // of min distance
-            float x = -pool[t].distance;
-            float y = -djk;
-            if (y > cur_alpha * x) {
-              occlude_factor[t] = (std::max)(occlude_factor[t], eps);
-            }
+            occlude_factor[t] = (p.distance + pool[t].distance - djk) / 2 /
+                                std::sqrt(p.distance * pool[t].distance);
+          } else if (_metric == diskann::Metric::INNER_PRODUCT) {
+            // stylized rules for inner product,
+            // since we want max instead of min distance
+            // TODO 内积距离的实现需要重新考量
           }
         }
-        start++;
       }
-      cur_alpha *= 1.2;
-    }
+
+    //   break;    // TODO 暂时只循环一次
+    // }
   }
 
   template<typename T, typename TagT>
@@ -585,8 +618,7 @@ namespace diskann {
     unsigned maxc = parameter.Get<unsigned>("C");
     float    alpha = parameter.Get<float>("alpha");
 
-    if (pool.size() == 0)
-      return;
+    if (pool.size() == 0) return;
 
     _width = (std::max)(_width, range);
 
@@ -740,10 +772,8 @@ namespace diskann {
     if (NUM_THREADS != 0)
       omp_set_num_threads(NUM_THREADS);
 
-    uint32_t NUM_SYNCS =
-        (unsigned) DIV_ROUND_UP(_nd + _num_frozen_pts, (64 * 64));
-    if (NUM_SYNCS < 40)
-      NUM_SYNCS = 40;
+    uint32_t NUM_SYNCS = (unsigned) DIV_ROUND_UP(_nd + _num_frozen_pts, (64 * 64));
+    if (NUM_SYNCS < 40) NUM_SYNCS = 40;
     diskann::cout << "Number of syncs: " << NUM_SYNCS << std::endl;
 
     _saturate_graph = parameters.Get<bool>("saturate_graph");
@@ -827,8 +857,7 @@ namespace diskann {
 
       for (uint32_t sync_num = 0; sync_num < NUM_SYNCS; sync_num++) {
         size_t start_id = sync_num * round_size;
-        size_t end_id =
-            (std::min)(_nd + _num_frozen_pts, (sync_num + 1) * round_size);
+        size_t end_id = std::min(_nd + _num_frozen_pts, (sync_num + 1) * round_size);
 
         auto s = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> diff;
@@ -867,6 +896,8 @@ namespace diskann {
         diff = std::chrono::high_resolution_clock::now() - s;
         sync_time += diff.count();
 
+        diskann::cout << "Stage 1 ... ";
+
 // prune_neighbors will check pool, and remove some of the points and
 // create a cut_graph, which contains neighbors for point n
 #pragma omp parallel for schedule(dynamic, 64)
@@ -891,6 +922,8 @@ namespace diskann {
           pruned_list.clear();
           pruned_list.shrink_to_fit();
         }
+
+        diskann::cout << "Stage 2 ... ";
 
 #pragma omp parallel for schedule(dynamic, 65536)
         for (_s64 node_ctr = 0; node_ctr < (_s64)(visit_order.size());
